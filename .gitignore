@@ -1,0 +1,9 @@
+.vercel
+node_modules/
+client/node_modules/
+client/.cache/
+.cache/
+node_modules/
+client/node_modules/
+.cache/
+client/.cache/
