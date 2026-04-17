@@ -207,8 +207,8 @@ CREATE TABLE IF NOT EXISTS import_logs (
 -- ================================================================
 INSERT INTO system_users (dni, nombre, apellido_paterno, role, password_hash)
 VALUES (
-  'hola', 'Administrador', 'Sistema', 'admin',
-  '$2b$10$k3/7QDMJLiLsS4XSmA5kYeSZuzCT36Dlv09aiaVtPWuP1RP2TeW9a'
+  'admin', 'Administrador', 'Sistema', 'admin',
+  '$2a$10$rOzMJFVBD.E5HI1PdPV8IuaJEFJOyPABXS4Y9bW2N1zN3rCHvNxHi'
 ) ON CONFLICT (dni) DO NOTHING;
 
 -- ================================================================
@@ -229,13 +229,3 @@ BEGIN
   OR dni LIKE '%' || q || '%';
 END;
 $$ LANGUAGE plpgsql;
-
-
-CREATE INDEX IF NOT EXISTS idx_students_nombres ON students USING gin(
-  to_tsvector(
-    'spanish',
-    COALESCE(apellido_paterno,'') || ' ' ||
-    COALESCE(apellido_materno,'') || ' ' ||
-    nombres
-  )
-);
