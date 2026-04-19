@@ -26,7 +26,7 @@ app.get('/api/health', (_, res) => res.json({ ok: true, ts: new Date() }));
 // Solo escuchar puerto en local
 if (process.env.VERCEL !== '1') {
   const PORT = process.env.PORT || 3001;
-  app.listen(PORT, () => console.log(`✅ Servidor corriendo en puerto ${PORT}`));
+  app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
 }
 
 module.exports = app;
