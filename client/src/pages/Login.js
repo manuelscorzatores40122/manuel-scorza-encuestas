@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import './Login.css';
+import { FaUser, FaLock } from 'react-icons/fa';
+import logo from '../assets/logo.png';
 
 const STAFF = ['admin', 'director', 'tutor', 'docente'];
 
@@ -129,15 +131,12 @@ export default function Login() {
 
       {/* Partículas decorativas */}
       <Particles />
-
       {/* Tarjeta de login */}
       <div className="login-card">
         {/* Encabezado */}
         <div className="login-logo">
-          <div className="login-icon-wrap">
-            <div className="login-icon-ring" />
-            <div className="login-icon-ring-2" />
-            <span className="login-icon">🏫</span>
+          <div className="login-logo-image">
+            <img src={logo} alt="Logo colegio" className="login-icon" />
           </div>
           <h1 className="login-title">IE 40122 Manuel Scorza Torres</h1>
           <p className="login-subtitle">Sistema de Encuestas y Biblioteca 2026</p>
@@ -150,10 +149,13 @@ export default function Login() {
           <div className="login-divider-line" />
         </div>
 
+  
+
+
         {/* Error */}
         {err && (
           <div className="alert alert-error" role="alert">
-            ⚠️ {err}
+            {err}
           </div>
         )}
 
@@ -162,7 +164,7 @@ export default function Login() {
           <div className="form-group">
             <label className="label" htmlFor="dni">DNI / Usuario</label>
             <div className="input-wrap">
-              <span className="input-icon">👤</span>
+              
               <input
                 id="dni"
                 className="input"
@@ -180,7 +182,6 @@ export default function Login() {
           <div className="form-group">
             <label className="label" htmlFor="pass">Contraseña</label>
             <div className="input-wrap">
-              <span className="input-icon">🔑</span>
               <input
                 id="pass"
                 className="input"
@@ -207,7 +208,7 @@ export default function Login() {
                   Ingresando...
                 </>
               ) : (
-                <>🔐 Iniciar Sesión</>
+                <>Iniciar Sesión</>
               )}
             </span>
           </button>
@@ -215,7 +216,7 @@ export default function Login() {
 
         {/* Info */}
         <div className="login-info">
-          <strong>ℹ️ Contraseña inicial:</strong> Tu número de DNI
+          <strong>Contraseña inicial:</strong> Tu número de DNI
         </div>
       </div>
 
