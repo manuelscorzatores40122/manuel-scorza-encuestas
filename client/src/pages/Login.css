@@ -226,13 +226,7 @@
   filter: none;
 }
 
-.login-icon {
-  position: relative;
-  z-index: 1;
-  font-size: 2.2rem;
-  line-height: 1;
-  filter: drop-shadow(0 0 8px rgba(28, 29, 28, 0.5));
-}
+
 /*titulo del login*/
 .login-title {
   font-family: 'Playfair Display', serif;
