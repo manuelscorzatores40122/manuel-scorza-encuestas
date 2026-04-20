@@ -37,6 +37,102 @@ const splitApod = (full) => {
   return [null, full];
 };
 
+// ── GET /api/students/me (alumno autenticado) ────────────────
+// ⚠️ DEBE ir ANTES de /:id para que Express no lo capture como parámetro
+router.get('/me', auth, async (req, res) => {
+  try {
+    if (!req.user.student_id) return res.status(404).json({ error: 'Sin perfil de alumno' });
+    const { rows } = await query('SELECT * FROM students WHERE id=$1', [req.user.student_id]);
+    if (!rows[0]) return res.status(404).json({ error: 'No encontrado' });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PUT /api/students/me (alumno edita su perfil) ────────────
+router.put('/me', auth, async (req, res) => {
+  try {
+    if (!req.user.student_id) return res.status(404).json({ error: 'Sin perfil de alumno' });
+    const {
+      foto_url, telefono, email, direccion,
+      padre_nombre, padre_dni, padre_telefono, padre_email,
+      madre_nombre, madre_dni, madre_telefono, madre_email,
+      apoderado_nombre, apoderado_apellidos, apoderado_dni,
+      apoderado_telefono, apoderado_email, apoderado_parentesco,
+    } = req.body;
+    const { rows } = await query(`
+      UPDATE students SET
+        foto_url=$1, telefono=$2, email=$3, direccion=$4,
+        padre_nombre=$5, padre_dni=$6, padre_telefono=$7, padre_email=$8,
+        madre_nombre=$9, madre_dni=$10, madre_telefono=$11, madre_email=$12,
+        apoderado_nombre=$13, apoderado_apellidos=$14, apoderado_dni=$15,
+        apoderado_telefono=$16, apoderado_email=$17, apoderado_parentesco=$18,
+        updated_at=NOW()
+      WHERE id=$19 RETURNING *
+    `, [
+      foto_url||null, telefono||null, email||null, direccion||null,
+      padre_nombre||null, padre_dni||null, cleanPhone(padre_telefono), padre_email||null,
+      madre_nombre||null, madre_dni||null, cleanPhone(madre_telefono), madre_email||null,
+      apoderado_nombre||null, apoderado_apellidos||null, apoderado_dni||null,
+      cleanPhone(apoderado_telefono), apoderado_email||null, apoderado_parentesco||null,
+      req.user.student_id,
+    ]);
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/students/meta/options ───────────────────────────
+router.get('/meta/options', staff, async (req, res) => {
+  try {
+    const [grados, secciones] = await Promise.all([
+      query('SELECT DISTINCT nivel, grado FROM students WHERE grado IS NOT NULL ORDER BY nivel, grado'),
+      query('SELECT DISTINCT seccion FROM students WHERE seccion IS NOT NULL ORDER BY seccion'),
+    ]);
+    res.json({
+      grados: grados.rows,
+      secciones: secciones.rows.map(r => r.seccion),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/students/export/excel ──────────────────────────
+router.get('/export/excel', staff, async (req, res) => {
+  try {
+    const { nivel='', grado='', seccion='', estado='' } = req.query;
+    const conds = []; const params = []; let pi = 1;
+    if (nivel)   { conds.push(`nivel=$${pi}`);   params.push(nivel); pi++; }
+    if (grado)   { conds.push(`grado=$${pi}`);   params.push(grado); pi++; }
+    if (seccion) { conds.push(`seccion=$${pi}`); params.push(seccion); pi++; }
+    if (estado)  { conds.push(`estado=$${pi}`);  params.push(estado); pi++; }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+    const { rows } = await query(`SELECT * FROM students ${where} ORDER BY nivel, grado, seccion, apellido_paterno, nombres`, params);
+
+    const wb = XLSX.utils.book_new();
+    const headers = ['N°','Nivel','Grado','Sección','DNI','Apellido Paterno','Apellido Materno','Nombres','Sexo','Fecha Nac.','Estado','Código','Apoderado','Cel. Apoderado','Padre','Cel. Padre','Madre','Cel. Madre'];
+    const wsData = [
+      ['IE 40122 MANUEL SCORZA TORRES — Lista de Alumnos'],
+      [`Exportado: ${new Date().toLocaleDateString('es-PE')} · Total: ${rows.length} alumnos`],
+      [],
+      headers,
+      ...rows.map((r, i) => [
+        i+1, r.nivel, r.grado?.trim(), r.seccion?.trim(),
+        r.dni, r.apellido_paterno, r.apellido_materno, r.nombres,
+        r.sexo, r.fecha_nacimiento ? new Date(r.fecha_nacimiento).toLocaleDateString('es-PE') : '',
+        r.estado, r.codigo_estudiante,
+        `${r.apoderado_apellidos||''} ${r.apoderado_nombre||''}`.trim(), r.apoderado_telefono,
+        r.padre_nombre, r.padre_telefono,
+        r.madre_nombre, r.madre_telefono,
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!cols'] = [5,12,12,10,14,20,20,26,10,13,12,14,28,14,28,14,28,14].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb, ws, 'Alumnos');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="alumnos_export.xlsx"');
+    res.send(buf);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── GET /api/students — lista con filtros y paginación ───────
 router.get('/', staff, async (req, res) => {
   try {
@@ -129,11 +225,9 @@ router.post('/', admin, async (req, res) => {
 
     if (!dni || !nombres) return res.status(400).json({ error: 'DNI y nombres son requeridos' });
 
-    // Verificar duplicado
     const { rows: ex } = await query('SELECT id FROM students WHERE dni=$1', [dni.trim()]);
     if (ex[0]) return res.status(409).json({ error: `El DNI ${dni} ya existe en el sistema` });
 
-    // Crear usuario del sistema
     const hash = await bcrypt.hash(dni.trim(), 10);
     const { rows: ur } = await query(`
       INSERT INTO system_users (dni, nombre, apellido_paterno, apellido_materno, role, password_hash)
@@ -158,8 +252,8 @@ router.post('/', admin, async (req, res) => {
     `, [
       dni.trim(), nombres, apellido_paterno||null, apellido_materno||null,
       nivel, grado||null, seccion||null, sexo||null, fecha_nacimiento||null, codigo_estudiante||null,
-      padre_nombre||null, padre_dni||null, cleanPhone(padre_telefono),  padre_email||null,
-      madre_nombre||null, madre_dni||null, cleanPhone(madre_telefono),  madre_email||null,
+      padre_nombre||null, padre_dni||null, cleanPhone(padre_telefono), padre_email||null,
+      madre_nombre||null, madre_dni||null, cleanPhone(madre_telefono), madre_email||null,
       apoderado_nombre||null, apoderado_apellidos||null, apoderado_dni||null,
       cleanPhone(apoderado_telefono), apoderado_email||null, apoderado_parentesco||null,
       telefono||null, email||null, direccion||null, ur[0].id,
@@ -251,45 +345,6 @@ router.post('/:id/reset-password', admin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── GET /api/students/export/excel ──────────────────────────
-router.get('/export/excel', staff, async (req, res) => {
-  try {
-    const { nivel='', grado='', seccion='', estado='' } = req.query;
-    const conds = []; const params = []; let pi = 1;
-    if (nivel)   { conds.push(`nivel=$${pi}`);   params.push(nivel); pi++; }
-    if (grado)   { conds.push(`grado=$${pi}`);   params.push(grado); pi++; }
-    if (seccion) { conds.push(`seccion=$${pi}`); params.push(seccion); pi++; }
-    if (estado)  { conds.push(`estado=$${pi}`);  params.push(estado); pi++; }
-    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
-    const { rows } = await query(`SELECT * FROM students ${where} ORDER BY nivel, grado, seccion, apellido_paterno, nombres`, params);
-
-    const wb = XLSX.utils.book_new();
-    const headers = ['N°','Nivel','Grado','Sección','DNI','Apellido Paterno','Apellido Materno','Nombres','Sexo','Fecha Nac.','Estado','Código','Apoderado','Cel. Apoderado','Padre','Cel. Padre','Madre','Cel. Madre'];
-    const wsData = [
-      ['IE 40122 MANUEL SCORZA TORRES — Lista de Alumnos'],
-      [`Exportado: ${new Date().toLocaleDateString('es-PE')} · Total: ${rows.length} alumnos`],
-      [],
-      headers,
-      ...rows.map((r, i) => [
-        i+1, r.nivel, r.grado?.trim(), r.seccion?.trim(),
-        r.dni, r.apellido_paterno, r.apellido_materno, r.nombres,
-        r.sexo, r.fecha_nacimiento ? new Date(r.fecha_nacimiento).toLocaleDateString('es-PE') : '',
-        r.estado, r.codigo_estudiante,
-        `${r.apoderado_apellidos||''} ${r.apoderado_nombre||''}`.trim(), r.apoderado_telefono,
-        r.padre_nombre, r.padre_telefono,
-        r.madre_nombre, r.madre_telefono,
-      ]),
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws['!cols'] = [5,12,12,10,14,20,20,26,10,13,12,14,28,14,28,14,28,14].map(w=>({wch:w}));
-    XLSX.utils.book_append_sheet(wb, ws, 'Alumnos');
-    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="alumnos_export.xlsx"');
-    res.send(buf);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // ── POST /api/students/import ────────────────────────────────
 router.post('/import', admin, async (req, res) => {
   try {
@@ -302,7 +357,6 @@ router.post('/import', admin, async (req, res) => {
     for (const s of students) {
       if (!s.dni || !s.nombres) { errores++; errList.push({ dni: s.dni||'?', error: 'DNI o nombres faltantes' }); continue; }
       try {
-        // Verificar duplicado
         const { rows: ex } = await query('SELECT id FROM students WHERE dni=$1', [s.dni.trim()]);
         if (ex[0]) { duplicados++; dupList.push(s.dni); continue; }
 
@@ -340,7 +394,6 @@ router.post('/import', admin, async (req, res) => {
       }
     }
 
-    // Guardar log
     await query(`
       INSERT INTO import_logs (archivo_nombre, nivel, total, nuevos, duplicados, errores, detalles, created_by)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -354,60 +407,4 @@ router.post('/import', admin, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
-// ── GET /api/students/meta/options ───────────────────────────
-router.get('/meta/options', staff, async (req, res) => {
-  try {
-    const [grados, secciones] = await Promise.all([
-      query('SELECT DISTINCT nivel, grado FROM students WHERE grado IS NOT NULL ORDER BY nivel, grado'),
-      query('SELECT DISTINCT seccion FROM students WHERE seccion IS NOT NULL ORDER BY seccion'),
-    ]);
-    res.json({
-      grados: grados.rows,
-      secciones: secciones.rows.map(r => r.seccion),
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 module.exports = router;
-
-// ── GET /api/students/me (alumno autenticado) ────────────────
-router.get('/me', auth, async (req, res) => {
-  try {
-    if (!req.user.student_id) return res.status(404).json({ error: 'Sin perfil de alumno' });
-    const { rows } = await query('SELECT * FROM students WHERE id=$1', [req.user.student_id]);
-    if (!rows[0]) return res.status(404).json({ error: 'No encontrado' });
-    res.json(rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── PUT /api/students/me (alumno edita su perfil) ────────────
-router.put('/me', auth, async (req, res) => {
-  try {
-    if (!req.user.student_id) return res.status(404).json({ error: 'Sin perfil de alumno' });
-    const {
-      foto_url, telefono, email, direccion,
-      padre_nombre, padre_dni, padre_telefono, padre_email,
-      madre_nombre, madre_dni, madre_telefono, madre_email,
-      apoderado_nombre, apoderado_apellidos, apoderado_dni,
-      apoderado_telefono, apoderado_email, apoderado_parentesco,
-    } = req.body;
-    const { rows } = await query(`
-      UPDATE students SET
-        foto_url=$1, telefono=$2, email=$3, direccion=$4,
-        padre_nombre=$5, padre_dni=$6, padre_telefono=$7, padre_email=$8,
-        madre_nombre=$9, madre_dni=$10, madre_telefono=$11, madre_email=$12,
-        apoderado_nombre=$13, apoderado_apellidos=$14, apoderado_dni=$15,
-        apoderado_telefono=$16, apoderado_email=$17, apoderado_parentesco=$18,
-        updated_at=NOW()
-      WHERE id=$19 RETURNING *
-    `, [
-      foto_url||null, telefono||null, email||null, direccion||null,
-      padre_nombre||null, padre_dni||null, cleanPhone(padre_telefono), padre_email||null,
-      madre_nombre||null, madre_dni||null, cleanPhone(madre_telefono), madre_email||null,
-      apoderado_nombre||null, apoderado_apellidos||null, apoderado_dni||null,
-      cleanPhone(apoderado_telefono), apoderado_email||null, apoderado_parentesco||null,
-      req.user.student_id,
-    ]);
-    res.json(rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
